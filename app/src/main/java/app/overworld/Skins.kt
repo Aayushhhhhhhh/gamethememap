@@ -23,6 +23,34 @@ data class Skin(
 object Skins {
     val all = listOf(
         Skin(
+            "nightgrid", "Night Grid", "Neon streets, crimson blocks", true,
+            bg = "#05080d", park = "#07140f", water = "#06101c",
+            minor = "#0f6f7e", major = "#1597ad", motorway = "#22d3ee",
+            casing = "#021015", building = "#8c1030", label = "#d7e3f0",
+            route = "#ffe14a", me = "#ffffff", accent = "#22d3ee",
+        ),
+        Skin(
+            "terminal", "Terminal", "Green phosphor wireframe", true,
+            bg = "#031206", park = "#06210d", water = "#031a0a",
+            minor = "#145c28", major = "#1f9a40", motorway = "#7dff9c",
+            casing = "#020b04", building = "#0b3d17", label = "#39ff6a",
+            route = "#d4ff4a", me = "#39ff6a", accent = "#39ff6a",
+        ),
+        Skin(
+            "dusty", "Dusty Trail", "Sun-baked frontier", true,
+            bg = "#3a2f22", park = "#4a4a2a", water = "#2d3b3a",
+            minor = "#8a7554", major = "#b89a62", motorway = "#e6c27a",
+            casing = "#231b12", building = "#5a4733", label = "#e8d9b8",
+            route = "#ffd166", me = "#ffffff", accent = "#e6a23c",
+        ),
+        Skin(
+            "heat", "Heat Wave", "Violet haze racing", true,
+            bg = "#1a0b33", park = "#231048", water = "#120a3a",
+            minor = "#4a2a8a", major = "#7a3dd6", motorway = "#ff5cf0",
+            casing = "#0d0620", building = "#3a1a6e", label = "#d9c2ff",
+            route = "#ffd34d", me = "#ffffff", accent = "#b05cff",
+        ),
+        Skin(
             "midnight", "Midnight", "Calm night drive", true,
             bg = "#0f1420", park = "#13241f", water = "#0b2a44",
             minor = "#2a3550", major = "#3b4a73", motorway = "#ffc93c",

@@ -24,7 +24,12 @@ data class Route(
  */
 interface GeoProvider {
     suspend fun search(query: String, nearLat: Double?, nearLon: Double?): List<Place>
-    suspend fun route(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double): Route?
+    suspend fun route(
+        fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
+        mode: String = "drive", avoid: List<String> = emptyList(),
+    ): Route?
+
+    suspend fun nearby(categories: String, lat: Double, lon: Double, radiusM: Int): List<Place>
 }
 
 class GeoapifyProvider(private val key: String) : GeoProvider {
@@ -57,9 +62,31 @@ class GeoapifyProvider(private val key: String) : GeoProvider {
         return out
     }
 
-    override suspend fun route(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double): Route? {
+    override suspend fun nearby(categories: String, lat: Double, lon: Double, radiusM: Int): List<Place> {
         val body = get(
-            "https://api.geoapify.com/v1/routing?waypoints=$fromLat,$fromLon|$toLat,$toLon&mode=drive&apiKey=$key"
+            "https://api.geoapify.com/v2/places?categories=$categories" +
+                "&filter=circle:$lon,$lat,$radiusM&bias=proximity:$lon,$lat&limit=20&apiKey=$key"
+        )
+        val feats = JSONObject(body).optJSONArray("features") ?: return emptyList()
+        val out = ArrayList<Place>()
+        for (i in 0 until feats.length()) {
+            val pr = feats.getJSONObject(i).optJSONObject("properties") ?: continue
+            val name = pr.optString("name", "")
+            if (name.isEmpty() || !pr.has("lat") || !pr.has("lon")) continue
+            val sub = pr.optString("address_line2", pr.optString("formatted", ""))
+            out.add(Place(name, sub, pr.getDouble("lat"), pr.getDouble("lon")))
+        }
+        return out
+    }
+
+    override suspend fun route(
+        fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
+        mode: String, avoid: List<String>,
+    ): Route? {
+        val avoidParam = if (avoid.isEmpty()) "" else "&avoid=" + avoid.joinToString("%7C")
+        val body = get(
+            "https://api.geoapify.com/v1/routing?waypoints=$fromLat,$fromLon%7C$toLat,$toLon" +
+                "&mode=$mode$avoidParam&apiKey=$key"
         )
         val feats = JSONObject(body).optJSONArray("features") ?: return null
         if (feats.length() == 0) return null

@@ -8,6 +8,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,18 +17,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -42,9 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,10 +52,15 @@ import app.overworld.BuildConfig
 import app.overworld.Geo
 import app.overworld.GeoapifyProvider
 import app.overworld.Place
+import app.overworld.Prefs
 import app.overworld.Route
 import app.overworld.Skin
 import app.overworld.Skins
 import app.overworld.StyleBuilder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
@@ -76,15 +76,22 @@ import org.maplibre.android.style.sources.GeoJsonSource
 private const val EMPTY_FC = """{"type":"FeatureCollection","features":[]}"""
 
 @Composable
-fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipSeen: () -> Unit) {
+fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
     val ctx = LocalContext.current
     val skin: Skin = Skins.byId(skinId)
-    val cardBg = if (skin.dark) Color(0xF0101626) else Color(0xF5FFFFFF)
-    val ink = inkFor(skin)
-    val muted = ink.copy(alpha = 0.6f)
-    val accent = hex(skin.accent)
+    val ui = remember(skin.id) {
+        Ui(
+            card = if (skin.dark) Color(0xF2101626) else Color(0xF7FFFFFF),
+            ink = inkFor(skin),
+            muted = inkFor(skin).copy(alpha = 0.6f),
+            accent = hex(skin.accent),
+            tile = if (skin.dark) Color(0xFF1B2335) else Color(0xFFECEAE4),
+            onInk = if (skin.dark) Color.Black else Color.White,
+        )
+    }
     val scope = rememberCoroutineScope()
     val provider = remember { GeoapifyProvider(BuildConfig.GEOAPIFY_KEY) }
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
 
     // ---- map ----
     val mapView = remember {
@@ -114,7 +121,6 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipS
     LaunchedEffect(Unit) {
         mapView.getMapAsync { m ->
             map = m
-            // Neutral starting view until we have a location fix.
             m.moveCamera(
                 CameraUpdateFactory.newCameraPosition(
                     CameraPosition.Builder().target(LatLng(18.5204, 73.8567)).zoom(11.0).build()
@@ -129,15 +135,28 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipS
     }
 
     // ---- app state ----
-    var mode by remember { mutableStateOf("home") } // home | plan | drive | arrived
+    var mode by remember { mutableStateOf("home") } // home | place | plan | drive | arrived
+    var sheetFull by remember { mutableStateOf(false) }
+    var showWorlds by remember { mutableStateOf(false) }
+    var showAvoid by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    var picked by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf<List<Place>>(emptyList()) }
+    var listTitle by remember { mutableStateOf<String?>(null) }
+    var listItems by remember { mutableStateOf<List<Place>>(emptyList()) }
+    var loadingList by remember { mutableStateOf(false) }
+    var savingFor by remember { mutableStateOf<String?>(null) } // "home" | "work"
+    var home by remember { mutableStateOf(Prefs.place(ctx, "home")) }
+    var work by remember { mutableStateOf(Prefs.place(ctx, "work")) }
+    var recents by remember { mutableStateOf(Prefs.recents(ctx)) }
     var dest by remember { mutableStateOf<Place?>(null) }
+    var travel by remember { mutableStateOf("drive") }
+    var routes by remember { mutableStateOf<Map<String, Route?>>(emptyMap()) }
     var route by remember { mutableStateOf<Route?>(null) }
     var planning by remember { mutableStateOf(false) }
+    var avoidTolls by remember { mutableStateOf(false) }
+    var avoidHighways by remember { mutableStateOf(false) }
+    var avoidFerries by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    var showSkins by remember { mutableStateOf(false) }
     var askLocation by remember { mutableStateOf(false) }
     var demo by remember { mutableStateOf(false) }
     var realMe by remember { mutableStateOf<DoubleArray?>(null) }
@@ -185,11 +204,19 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipS
     LaunchedEffect(hasPerm) { if (hasPerm) startUpdates() }
     DisposableEffect(Unit) { onDispose { lm.removeUpdates(listener) } }
 
+    fun origin(): DoubleArray? =
+        me ?: map?.cameraPosition?.target?.let { doubleArrayOf(it.longitude, it.latitude) }
+
+    fun distText(p: Place): String {
+        val o = origin() ?: return ""
+        return Geo.fmtDist(Geo.dist(o, doubleArrayOf(p.lon, p.lat)))
+    }
+
     fun recenter() {
         val m = map ?: return
         val p = me
         if (p == null) {
-            message = "Looking for your location..."
+            if (hasPerm) message = "Looking for your location..." else askLocation = true
             return
         }
         m.animateCamera(
@@ -198,6 +225,128 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipS
             ),
             800,
         )
+    }
+
+    fun fitRoute() {
+        val r = route ?: return
+        val m = map ?: return
+        val h = ctx.resources.displayMetrics.heightPixels
+        val b = LatLngBounds.Builder().includes(r.line.map { LatLng(it[1], it[0]) }).build()
+        m.easeCamera(CameraUpdateFactory.newLatLngBounds(b, 90, (h * 0.12).toInt(), 90, (h * 0.5).toInt()), 900)
+    }
+
+    fun openPlace(p: Place) {
+        val key = savingFor
+        query = ""
+        results = emptyList()
+        sheetFull = false
+        listTitle = null
+        if (key != null) {
+            Prefs.savePlace(ctx, key, p)
+            if (key == "home") home = p else work = p
+            savingFor = null
+            message = "Saved as ${if (key == "home") "Home" else "Work"}"
+            return
+        }
+        Prefs.addRecent(ctx, p)
+        recents = Prefs.recents(ctx)
+        dest = p
+        route = null
+        routes = emptyMap()
+        mode = "place"
+        map?.animateCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder().target(LatLng(p.lat, p.lon)).zoom(16.0).tilt(50.0).build()
+            ),
+            900,
+        )
+    }
+
+    fun fetchRoutes() {
+        val p = dest ?: return
+        val from = origin() ?: return
+        val avoid = buildList {
+            if (avoidTolls) add("tolls")
+            if (avoidHighways) add("highways")
+            if (avoidFerries) add("ferries")
+        }
+        if (me == null) message = "No location yet - routing from the map centre."
+        planning = true
+        scope.launch {
+            val modes = listOf("drive", "bicycle", "walk")
+            val res = modes.map { m ->
+                async {
+                    try {
+                        provider.route(from[1], from[0], p.lat, p.lon, m, avoid)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }.map { it.await() }
+            routes = modes.zip(res).toMap()
+            route = routes[travel]
+            planning = false
+            if (route == null) message = "No route found."
+            fitRoute()
+        }
+    }
+
+    fun searchCategory(title: String, cats: String) {
+        if (BuildConfig.GEOAPIFY_KEY.isEmpty()) {
+            message = "Add a Geoapify key to search nearby - see the README."
+            return
+        }
+        val c = origin()
+        if (c == null) {
+            message = "Waiting for a location first."
+            return
+        }
+        sheetFull = true
+        listTitle = title
+        listItems = emptyList()
+        loadingList = true
+        scope.launch {
+            listItems = try {
+                provider.nearby(cats, c[1], c[0], 5000)
+            } catch (e: Exception) {
+                message = "Couldn't load places."
+                emptyList()
+            }
+            loadingList = false
+        }
+    }
+
+    fun clearTrip() {
+        mode = "home"
+        route = null
+        routes = emptyMap()
+        dest = null
+        demo = false
+        demoMe = null
+        travel = "drive"
+        query = ""
+        showAvoid = false
+        sheetFull = false
+        listTitle = null
+        if (me != null) recenter()
+    }
+
+    BackHandler(enabled = showWorlds || showAvoid || mode != "home" || sheetFull) {
+        when {
+            showWorlds -> showWorlds = false
+            showAvoid -> showAvoid = false
+            mode == "plan" -> {
+                mode = "place"
+                route = null
+                routes = emptyMap()
+            }
+            mode == "place" || mode == "drive" || mode == "arrived" -> clearTrip()
+            sheetFull -> {
+                sheetFull = false
+                query = ""
+                listTitle = null
+            }
+        }
     }
 
     // ---- route progress ----
@@ -218,6 +367,8 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipS
         } else {
             remaining
         }
+    fun eta(sec: Double): String =
+        SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(System.currentTimeMillis() + (sec * 1000).toLong()))
 
     // ---- push data into the map ----
     LaunchedEffect(style, route, me, dest) {
@@ -273,9 +424,9 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipS
         if (mode == "drive" && remaining < 30.0 && route != null) mode = "arrived"
     }
 
-    // ---- search ----
+    // ---- live search ----
     LaunchedEffect(query) {
-        if (query.length < 3 || query == picked) {
+        if (query.length < 3) {
             results = emptyList()
             return@LaunchedEffect
         }
@@ -297,254 +448,235 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit, showTip: Boolean, onTipS
             message = null
         }
     }
-
-    fun pick(p: Place) {
-        picked = p.name
-        query = p.name
-        results = emptyList()
-        dest = p
-        route = null
-        mode = "plan"
-        planning = true
-        showSkins = false
-        scope.launch {
-            val from: DoubleArray? = me ?: map?.cameraPosition?.target?.let { doubleArrayOf(it.longitude, it.latitude) }
-            if (from == null) {
-                planning = false
-                return@launch
-            }
-            if (me == null) message = "No location yet - routing from the map centre."
-            try {
-                val r = provider.route(from[1], from[0], p.lat, p.lon)
-                route = r
-                if (r == null) message = "No route found."
-                val m = map
-                if (r != null && m != null) {
-                    val pts = r.line.map { LatLng(it[1], it[0]) }
-                    val b = LatLngBounds.Builder().includes(pts).build()
-                    m.easeCamera(CameraUpdateFactory.newLatLngBounds(b, 90, 260, 90, 520), 900)
-                }
-            } catch (e: Exception) {
-                message = "Couldn't plan the route."
-            }
-            planning = false
-        }
-    }
-
-    fun clearTrip() {
-        mode = "home"
-        route = null
-        dest = null
-        demo = false
-        demoMe = null
-        query = ""
-        picked = null
-        recenter()
+    LaunchedEffect(avoidTolls, avoidHighways, avoidFerries) {
+        if (mode == "plan") fetchRoutes()
     }
 
     // ================= UI =================
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
-        // Top: search (home/plan) or next instruction (drive)
-        Column(Modifier.fillMaxWidth().systemBarsPadding().padding(12.dp)) {
-            if (mode == "home" || mode == "plan") {
-                Box(
-                    Modifier.fillMaxWidth().shadow(8.dp, RoundedCornerShape(28.dp)).clip(RoundedCornerShape(28.dp))
-                        .background(cardBg).padding(horizontal = 20.dp, vertical = 16.dp)
-                ) {
-                    BasicTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        singleLine = true,
-                        textStyle = TextStyle(color = ink, fontSize = 17.sp),
-                        cursorBrush = SolidColor(accent),
-                        modifier = Modifier.fillMaxWidth(),
-                        decorationBox = { inner ->
-                            Box {
-                                if (query.isEmpty()) Text("Where to?", color = muted, fontSize = 17.sp)
-                                inner()
-                            }
-                        },
-                    )
-                }
-                if (results.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Column(
-                        Modifier.fillMaxWidth().shadow(8.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp))
-                            .background(cardBg)
-                    ) {
-                        results.forEach { p ->
-                            Column(Modifier.fillMaxWidth().clickable { pick(p) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                                Text(p.name, color = ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                if (p.sub.isNotEmpty()) Text(p.sub, color = muted, fontSize = 13.sp, maxLines = 1)
-                            }
-                        }
-                    }
-                }
-            } else if (mode == "drive") {
-                Column(
-                    Modifier.fillMaxWidth().shadow(8.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp))
-                        .background(cardBg).padding(20.dp)
-                ) {
-                    Text(Geo.fmtDist(nextStepDist), color = accent, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        nextStep?.text?.takeIf { it.isNotEmpty() } ?: "Follow the route",
-                        color = ink, fontSize = 18.sp, maxLines = 2,
-                    )
-                }
+        // Brand chip (home)
+        if (mode == "home" && !sheetFull) {
+            Row(
+                Modifier.systemBarsPadding().padding(12.dp).shadow(6.dp, RoundedCornerShape(20.dp))
+                    .clip(RoundedCornerShape(20.dp)).background(ui.card).padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("◭", color = ui.accent, fontSize = 16.sp)
+                Text("Overworld", color = ui.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
-        // Round buttons (home/plan)
-        if (mode == "home" || mode == "plan") {
+        // Next instruction (drive)
+        if (mode == "drive") {
+            Column(
+                Modifier.systemBarsPadding().padding(12.dp).fillMaxWidth().shadow(8.dp, RoundedCornerShape(24.dp))
+                    .clip(RoundedCornerShape(24.dp)).background(ui.card).padding(20.dp)
+            ) {
+                Text(Geo.fmtDist(nextStepDist), color = ui.accent, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    nextStep?.text?.takeIf { it.isNotEmpty() } ?: "Follow the route",
+                    color = ui.ink, fontSize = 18.sp, maxLines = 2,
+                )
+            }
+        }
+
+        // Round buttons
+        if ((mode == "home" || mode == "place" || mode == "plan") && !sheetFull) {
             Column(
                 Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                RoundButton("◎", cardBg, ink) {
-                    if (hasPerm) recenter() else askLocation = true
-                }
-                RoundButton("◐", cardBg, ink) { showSkins = !showSkins }
+                RoundButton("◐", ui) { showWorlds = true }
+                RoundButton("◎", ui) { recenter() }
             }
         }
 
-        // Bottom area
-        Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().systemBarsPadding().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        // Bottom stack
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
             message?.let {
                 Box(
-                    Modifier.align(Alignment.CenterHorizontally).clip(RoundedCornerShape(18.dp))
+                    Modifier.align(Alignment.CenterHorizontally).padding(bottom = 10.dp).clip(RoundedCornerShape(18.dp))
                         .background(Color(0xE6000000)).padding(horizontal = 16.dp, vertical = 10.dp)
                 ) { Text(it, color = Color.White, fontSize = 14.sp) }
             }
 
-            if (showSkins && (mode == "home" || mode == "plan")) {
-                Row(
-                    Modifier.fillMaxWidth().shadow(8.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp))
-                        .background(cardBg).padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Skins.all.forEach { s ->
-                        Column(
-                            Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
-                                .background(if (s.id == skin.id) hex(s.accent).copy(alpha = 0.25f) else Color.Transparent)
-                                .clickable { onSkin(s.id) }.padding(6.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            SkinPreview(s, Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(10.dp)))
-                            Text(s.name, color = ink, fontSize = 11.sp, maxLines = 1)
-                        }
-                    }
-                }
-            }
-
             when {
-                askLocation && mode == "home" -> Card(cardBg) {
-                    Text("Place your car on the map", color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                askLocation && mode == "home" -> SheetShell(ui) {
+                    Text("Place your car on the map", color = ui.ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text(
                         "Your location is used to show where you are and plan routes.",
-                        color = muted, fontSize = 14.sp,
+                        color = ui.muted, fontSize = 14.sp,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        PrimaryButton("Allow", accent) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        PrimaryBtn("Allow", ui) {
                             askLocation = false
                             permLauncher.launch(
                                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
                             )
                         }
-                        TextAction("Not now", muted) { askLocation = false }
+                        TextBtn("Not now", ui.muted) { askLocation = false }
                     }
                 }
 
-                showTip && mode == "home" && !askLocation -> Card(cardBg) {
-                    Text("Where are you headed?", color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Search above to plan a drive, or tap ◎ to find yourself. Tap ◐ to change your world.",
-                        color = muted, fontSize = 14.sp,
-                    )
-                    PrimaryButton("Got it", accent) { onTipSeen() }
+                mode == "home" -> HomeSheet(
+                    ui = ui,
+                    full = sheetFull,
+                    maxHeight = if (sheetFull) screenH * 0.9f else screenH * 0.4f,
+                    hint = if (savingFor != null) "Search a place to save as ${if (savingFor == "home") "Home" else "Work"}" else "Search",
+                    query = query,
+                    onQuery = { query = it },
+                    onExpand = { sheetFull = true },
+                    onClose = {
+                        sheetFull = false
+                        query = ""
+                        listTitle = null
+                        savingFor = null
+                    },
+                    home = home,
+                    work = work,
+                    onHome = {
+                        val h = home
+                        if (h != null) openPlace(h) else {
+                            savingFor = "home"
+                            sheetFull = true
+                        }
+                    },
+                    onWork = {
+                        val w = work
+                        if (w != null) openPlace(w) else {
+                            savingFor = "work"
+                            sheetFull = true
+                        }
+                    },
+                    recents = recents,
+                    results = results,
+                    listTitle = listTitle,
+                    listItems = listItems,
+                    loadingList = loadingList,
+                    onBackList = { listTitle = null },
+                    onCategory = { title, cats -> searchCategory(title, cats) },
+                    onPlace = { openPlace(it) },
+                    distText = { distText(it) },
+                )
+
+                mode == "place" -> {
+                    val d = dest
+                    if (d != null) {
+                        PlaceCard(
+                            ui = ui,
+                            place = d,
+                            dist = distText(d),
+                            onClose = { clearTrip() },
+                            onDirections = {
+                                mode = "plan"
+                                fetchRoutes()
+                            },
+                            onSetHome = {
+                                Prefs.savePlace(ctx, "home", d)
+                                home = d
+                                message = "Saved as Home"
+                            },
+                            onSetWork = {
+                                Prefs.savePlace(ctx, "work", d)
+                                work = d
+                                message = "Saved as Work"
+                            },
+                        )
+                    }
                 }
 
-                mode == "plan" -> Card(cardBg) {
-                    Text(dest?.name ?: "", color = ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                    Text(
-                        when {
-                            planning -> "Finding the best route..."
-                            route != null -> "${Geo.fmtTime(route!!.seconds)} · ${Geo.fmtDist(route!!.meters)}"
-                            else -> "No route"
-                        },
-                        color = muted, fontSize = 15.sp,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        PrimaryButton("Start", accent, enabled = route != null) {
-                            demo = false
+                mode == "plan" -> DirectionsSheet(
+                    ui = ui,
+                    destName = dest?.name ?: "",
+                    travel = travel,
+                    routes = routes,
+                    loading = planning,
+                    etaText = eta(routes[travel]?.seconds ?: 0.0),
+                    onTravel = {
+                        travel = it
+                        route = routes[it]
+                        fitRoute()
+                    },
+                    onClose = {
+                        mode = "place"
+                        route = null
+                        routes = emptyMap()
+                    },
+                    onGo = {
+                        demo = false
+                        mode = "drive"
+                    },
+                    onDemo = {
+                        val r = routes["drive"]
+                        if (r != null) {
+                            travel = "drive"
+                            route = r
+                            demo = true
+                            demoMe = r.line.first()
                             mode = "drive"
                         }
-                        TextAction("Demo drive", muted) {
-                            if (route != null) {
-                                demo = true
-                                demoMe = route!!.line.first()
-                                mode = "drive"
-                            }
-                        }
-                        TextAction("Cancel", muted) { clearTrip() }
-                    }
-                }
+                    },
+                    onAvoid = { showAvoid = true },
+                )
 
-                mode == "drive" -> Card(cardBg) {
+                mode == "drive" -> SheetShell(ui) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(Geo.fmtTime(remainingSec), color = ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                            Text(Geo.fmtDist(remaining) + if (demo) " · demo" else "", color = muted, fontSize = 14.sp)
+                            Text(Geo.fmtTime(remainingSec), color = ui.ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                Geo.fmtDist(remaining) + if (demo) " · demo" else "",
+                                color = ui.muted, fontSize = 14.sp,
+                            )
                         }
-                        PrimaryButton("End", accent) { clearTrip() }
+                        PrimaryBtn("End", ui) { clearTrip() }
                     }
                 }
 
-                mode == "arrived" -> Card(cardBg) {
-                    Text("You've arrived", color = ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text(dest?.name ?: "", color = muted, fontSize = 15.sp, maxLines = 1)
-                    PrimaryButton("Done", accent) { clearTrip() }
+                mode == "arrived" -> SheetShell(ui) {
+                    Text("You've arrived", color = ui.ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(dest?.name ?: "", color = ui.muted, fontSize = 15.sp, maxLines = 1)
+                    PrimaryBtn("Done", ui, Modifier.fillMaxWidth()) { clearTrip() }
                 }
             }
+        }
+
+        if (showAvoid) {
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                AvoidSheet(
+                    ui = ui,
+                    tolls = avoidTolls,
+                    highways = avoidHighways,
+                    ferries = avoidFerries,
+                    onTolls = { avoidTolls = it },
+                    onHighways = { avoidHighways = it },
+                    onFerries = { avoidFerries = it },
+                    onClose = { showAvoid = false },
+                )
+            }
+        }
+
+        if (showWorlds) {
+            WorldPicker(
+                title = "Map Select",
+                initialId = skin.id,
+                buttonLabel = "Use this world",
+                onContinue = {
+                    onSkin(it)
+                    showWorlds = false
+                },
+                onBack = { showWorlds = false },
+            )
         }
     }
 }
 
 @Composable
-private fun Card(bg: Color, content: @Composable () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().shadow(10.dp, RoundedCornerShape(26.dp)).clip(RoundedCornerShape(26.dp))
-            .background(bg).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) { content() }
-}
-
-@Composable
-private fun RoundButton(glyph: String, bg: Color, ink: Color, onClick: () -> Unit) {
+private fun RoundButton(glyph: String, ui: Ui, onClick: () -> Unit) {
     Box(
-        Modifier.size(52.dp).shadow(6.dp, CircleShape).clip(CircleShape).background(bg).clickable(onClick = onClick),
+        Modifier.size(52.dp).shadow(6.dp, CircleShape).clip(CircleShape).background(ui.card).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Text(glyph, color = ink, fontSize = 22.sp) }
-}
-
-@Composable
-private fun PrimaryButton(label: String, accent: Color, enabled: Boolean = true, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        shape = RoundedCornerShape(24.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = onAccent(accent)),
-    ) { Text(label, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-}
-
-@Composable
-private fun TextAction(label: String, color: Color, onClick: () -> Unit) {
-    Text(
-        label, color = color, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(12.dp),
-    )
+    ) { Text(glyph, color = ui.ink, fontSize = 22.sp) }
 }

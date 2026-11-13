@@ -19,11 +19,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             var onboarded by remember { mutableStateOf(Prefs.onboarded(ctx)) }
             var skinId by remember { mutableStateOf(Prefs.skin(ctx)) }
-            var tip by remember { mutableStateOf(!Prefs.tipSeen(ctx)) }
 
             if (!onboarded) {
-                Onboarding(initialSkin = skinId) { chosen ->
-                    Prefs.finishOnboarding(ctx, chosen)
+                Onboarding(initialSkin = skinId) { chosen, vibes ->
+                    Prefs.finishOnboarding(ctx, chosen, vibes)
                     skinId = chosen
                     onboarded = true
                 }
@@ -33,11 +32,6 @@ class MainActivity : ComponentActivity() {
                     onSkin = {
                         skinId = it
                         Prefs.setSkin(ctx, it)
-                    },
-                    showTip = tip,
-                    onTipSeen = {
-                        tip = false
-                        Prefs.setTipSeen(ctx)
                     },
                 )
             }
