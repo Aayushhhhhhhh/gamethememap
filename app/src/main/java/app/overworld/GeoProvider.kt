@@ -39,7 +39,21 @@ class GeoapifyProvider(private val key: String) : GeoProvider {
         try {
             c.connectTimeout = 10000
             c.readTimeout = 15000
-            if (c.responseCode !in 200..299) error("HTTP ${c.responseCode}")
+            if (c.responseCode !in 200..299) {
+                val err = try {
+                    c.errorStream?.bufferedReader()?.use { it.readText() }
+                } catch (_: Exception) {
+                    null
+                }
+                val msg = err?.let {
+                    try {
+                        JSONObject(it).optString("message", it)
+                    } catch (_: Exception) {
+                        it
+                    }
+                } ?: ""
+                error("HTTP ${c.responseCode} ${msg.take(90)}")
+            }
             c.inputStream.bufferedReader().use { it.readText() }
         } finally {
             c.disconnect()

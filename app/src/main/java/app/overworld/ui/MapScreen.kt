@@ -273,12 +273,14 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
         if (me == null) message = "No location yet - routing from the map centre."
         planning = true
         scope.launch {
+            var routeErr: String? = null
             val modes = listOf("drive", "bicycle", "walk")
             val res = modes.map { m ->
                 async {
                     try {
                         provider.route(from[1], from[0], p.lat, p.lon, m, avoid)
                     } catch (e: Exception) {
+                        if (routeErr == null) routeErr = e.message
                         null
                     }
                 }
@@ -286,7 +288,7 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
             routes = modes.zip(res).toMap()
             route = routes[travel]
             planning = false
-            if (route == null) message = "No route found."
+            if (route == null) message = routeErr?.let { "Route failed: $it" } ?: "No route found."
             fitRoute()
         }
     }
@@ -309,7 +311,7 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
             listItems = try {
                 provider.nearby(cats, c[1], c[0], 5000)
             } catch (e: Exception) {
-                message = "Couldn't load places."
+                message = "Places failed: ${e.message}"
                 emptyList()
             }
             loadingList = false
@@ -438,13 +440,13 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
         results = try {
             provider.search(query, me?.get(1), me?.get(0))
         } catch (e: Exception) {
-            message = "Search failed. Check your connection."
+            message = "Search failed: ${e.message}"
             emptyList()
         }
     }
     LaunchedEffect(message) {
         if (message != null) {
-            delay(3500)
+            delay(6000)
             message = null
         }
     }
