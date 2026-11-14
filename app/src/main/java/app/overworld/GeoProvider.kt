@@ -63,17 +63,46 @@ class GeoapifyProvider(private val key: String) : GeoProvider {
     override suspend fun search(query: String, nearLat: Double?, nearLon: Double?): List<Place> {
         val q = URLEncoder.encode(query, "UTF-8")
         val bias = if (nearLat != null && nearLon != null) "&bias=proximity:$nearLon,$nearLat" else ""
-        val body = get("https://api.geoapify.com/v1/geocode/autocomplete?text=$q&limit=5&format=json$bias&apiKey=$key")
-        val arr = JSONObject(body).optJSONArray("results") ?: return emptyList()
         val out = ArrayList<Place>()
-        for (i in 0 until arr.length()) {
+
+        // 1) addresses, streets, localities, cities
+        val body = get("https://api.geoapify.com/v1/geocode/autocomplete?text=$q&limit=8&lang=en&format=json$bias&apiKey=$key")
+        val arr = JSONObject(body).optJSONArray("results")
+        if (arr != null) for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             if (!o.has("lat") || !o.has("lon")) continue
             val line1 = o.optString("address_line1", o.optString("name", ""))
             val line2 = o.optString("address_line2", "")
             out.add(Place(line1.ifEmpty { o.optString("formatted") }, line2, o.getDouble("lat"), o.getDouble("lon")))
         }
-        return out
+
+        // 2) businesses / landmarks by name near the user (autocomplete rarely returns these)
+        if (nearLat != null && nearLon != null) {
+            try {
+                val cats = "catering,commercial,accommodation,entertainment,leisure,tourism,healthcare,education,service,public_transport"
+                val pb = get(
+                    "https://api.geoapify.com/v2/places?categories=$cats&name=$q" +
+                        "&filter=circle:$nearLon,$nearLat,40000&bias=proximity:$nearLon,$nearLat&limit=8&apiKey=$key"
+                )
+                val feats = JSONObject(pb).optJSONArray("features")
+                if (feats != null) for (i in 0 until feats.length()) {
+                    val pr = feats.getJSONObject(i).optJSONObject("properties") ?: continue
+                    val name = pr.optString("name", "")
+                    if (name.isEmpty() || !pr.has("lat") || !pr.has("lon")) continue
+                    out.add(0, Place(name, pr.optString("address_line2", pr.optString("formatted", "")), pr.getDouble("lat"), pr.getDouble("lon")))
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        // drop near-duplicates, then nearest first when we know where the user is
+        val seen = HashSet<String>()
+        val unique = out.filter { seen.add(it.name.lowercase() + "|" + "%.3f,%.3f".format(it.lat, it.lon)) }
+        return if (nearLat != null && nearLon != null) {
+            unique.sortedBy { Geo.dist(doubleArrayOf(nearLon, nearLat), doubleArrayOf(it.lon, it.lat)) }.take(10)
+        } else {
+            unique.take(10)
+        }
     }
 
     override suspend fun nearby(categories: String, lat: Double, lon: Double, radiusM: Int): List<Place> {

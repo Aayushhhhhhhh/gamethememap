@@ -307,13 +307,15 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
 
     fun fetchRoutes() {
         val p = dest ?: return
-        val from = origin() ?: return
+        val from = me?.let { it } ?: run {
+            message = "Turn on location so I can route from where you are."
+            return
+        }
         val avoid = buildList {
             if (avoidTolls) add("tolls")
             if (avoidHighways) add("highways")
             if (avoidFerries) add("ferries")
         }
-        if (me == null) message = "No location yet - routing from the map centre."
         planning = true
         scope.launch {
             var routeErr: String? = null
