@@ -535,32 +535,32 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
             }
         }
 
-        // Map controls (just above the bottom sheet)
-        if ((mode == "home" || mode == "place" || mode == "plan") && !sheetFull) {
-            Column(
-                Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = screenH * 0.5f + 12.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Column(
-                    Modifier.shadow(6.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)).background(ui.card),
-                ) {
-                    Text(
-                        "select map", color = ui.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.clickable { showWorlds = true }.padding(horizontal = 16.dp, vertical = 10.dp),
-                    )
-                    Text(
-                        "map details", color = ui.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.clickable { showDetails = true }.padding(horizontal = 16.dp, vertical = 10.dp),
-                    )
-                }
-                RoundButton(if (is3d) "3D" else "2D", ui) { toggle3d() }
-                RoundButton("➤", ui) { recenter() }
-            }
-        }
-
         // Bottom stack
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+            if ((mode == "home" || mode == "place" || mode == "plan") && !sheetFull && !askLocation) {
+                Column(
+                    Modifier.align(Alignment.End).padding(end = 14.dp, bottom = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(
+                        Modifier.shadow(6.dp, RoundedCornerShape(30.dp)).clip(RoundedCornerShape(30.dp)).background(ui.card)
+                            .padding(6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        SkinPreview(
+                            skin,
+                            Modifier.size(46.dp).clip(CircleShape).clickable { showWorlds = true },
+                        )
+                        Box(
+                            Modifier.size(46.dp).clip(CircleShape).clickable { showDetails = true },
+                            contentAlignment = Alignment.Center,
+                        ) { Text("◈", color = ui.ink, fontSize = 24.sp) }
+                    }
+                    RoundButton("➤", ui) { recenter() }
+                }
+            }
             message?.let {
                 Box(
                     Modifier.align(Alignment.CenterHorizontally).padding(bottom = 10.dp).clip(RoundedCornerShape(18.dp))
@@ -589,8 +589,8 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
                 mode == "home" -> HomeSheet(
                     ui = ui,
                     full = sheetFull,
-                    maxHeight = if (sheetFull) screenH * 0.9f else screenH * 0.5f,
-                    hint = if (savingFor != null) "Search a place to save as ${if (savingFor == "home") "Home" else "Work"}" else "Search",
+                    maxHeight = if (sheetFull) screenH * 0.9f else screenH * 0.56f,
+                    hint = if (savingFor != null) "Search a place to save as ${if (savingFor == "home") "Home" else "Work"}" else "Search here",
                     query = query,
                     onQuery = { query = it },
                     onExpand = { sheetFull = true },
@@ -719,7 +719,7 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
 
         if (showDetails) {
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-                DetailsSheet(ui, showBuildings, showLabels, { showBuildings = it }, { showLabels = it }, { showDetails = false })
+                DetailsSheet(ui, showBuildings, showLabels, is3d, { showBuildings = it }, { showLabels = it }, { if (it != is3d) toggle3d() }, { showDetails = false })
             }
         }
         if (showProfile) {
