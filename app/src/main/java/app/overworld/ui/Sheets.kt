@@ -142,8 +142,9 @@ private fun PlaceRow(p: Place, dist: String, ui: Ui, onClick: () -> Unit) {
 }
 
 /**
- * Home bottom sheet: search, Home/Work chips, then (when expanded) recents, recommendations
- * and popular categories. Typing swaps the content for live search results.
+ * Home bottom sheet (from the paper sketch): handle, search + mic + profile button,
+ * Home / Work / Saved / See all chips, Recent, Recommendations. Typing swaps the content
+ * for live search results; category taps show nearby places.
  */
 @Composable
 fun HomeSheet(
@@ -155,10 +156,13 @@ fun HomeSheet(
     onQuery: (String) -> Unit,
     onExpand: () -> Unit,
     onClose: () -> Unit,
+    onMic: () -> Unit,
+    onProfile: () -> Unit,
     home: Place?,
     work: Place?,
     onHome: () -> Unit,
     onWork: () -> Unit,
+    onSaved: () -> Unit,
     recents: List<Place>,
     results: List<Place>,
     listTitle: String?,
@@ -180,35 +184,46 @@ fun HomeSheet(
         ) { Box(Modifier.width(40.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(ui.muted.copy(alpha = 0.5f))) }
 
         Row(
-            Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(ui.tile)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+            Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("🔍", fontSize = 16.sp)
-            BasicTextField(
-                value = query,
-                onValueChange = onQuery,
-                singleLine = true,
-                textStyle = TextStyle(color = ui.ink, fontSize = 17.sp),
-                cursorBrush = SolidColor(ui.accent),
-                modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onExpand() },
-                decorationBox = { inner ->
-                    Box {
-                        if (query.isEmpty()) Text(hint, color = ui.muted, fontSize = 17.sp)
-                        inner()
-                    }
-                },
-            )
-            if (full || query.isNotEmpty()) {
-                Text(
-                    "✕", color = ui.muted, fontSize = 16.sp,
-                    modifier = Modifier.clip(CircleShape).clickable {
-                        focus.clearFocus()
-                        onClose()
-                    }.padding(4.dp),
+            Row(
+                Modifier.weight(1f).clip(RoundedCornerShape(26.dp)).background(ui.tile)
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQuery,
+                    singleLine = true,
+                    textStyle = TextStyle(color = ui.ink, fontSize = 17.sp),
+                    cursorBrush = SolidColor(ui.accent),
+                    modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onExpand() },
+                    decorationBox = { inner ->
+                        Box {
+                            if (query.isEmpty()) Text(hint, color = ui.muted, fontSize = 17.sp)
+                            inner()
+                        }
+                    },
                 )
+                if (query.isNotEmpty() || full) {
+                    Text(
+                        "✕", color = ui.muted, fontSize = 16.sp,
+                        modifier = Modifier.clip(CircleShape).clickable {
+                            focus.clearFocus()
+                            onClose()
+                        }.padding(4.dp),
+                    )
+                } else {
+                    Text("🎤", fontSize = 18.sp, modifier = Modifier.clip(CircleShape).clickable(onClick = onMic).padding(4.dp))
+                }
             }
+            Box(
+                Modifier.size(48.dp).clip(CircleShape).background(ui.tile).clickable(onClick = onProfile),
+                contentAlignment = Alignment.Center,
+            ) { Text("👤", fontSize = 20.sp) }
         }
 
         Column(
@@ -216,8 +231,10 @@ fun HomeSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip(if (home != null) "🏠 Home" else "＋ Add Home", ui, onHome)
-                Chip(if (work != null) "💼 Work" else "＋ Add Work", ui, onWork)
+                Chip(if (home != null) "🏠 Home" else "🏠 Add Home", ui, onHome)
+                Chip(if (work != null) "💼 Work" else "💼 Add Work", ui, onWork)
+                Chip("🔖 Saved", ui, onSaved)
+                Chip("See all ›", ui, onSaved)
             }
 
             if (query.length >= 3) {
@@ -231,47 +248,64 @@ fun HomeSheet(
                     )
                 }
                 if (loadingList) Text("Looking nearby...", color = ui.muted, fontSize = 14.sp)
-                else if (listItems.isEmpty()) Text("Nothing found nearby.", color = ui.muted, fontSize = 14.sp)
+                else if (listItems.isEmpty()) Text("Nothing here yet.", color = ui.muted, fontSize = 14.sp)
                 listItems.forEach { PlaceRow(it, distText(it), ui) { onPlace(it) } }
             } else {
-                if (full && recents.isNotEmpty()) {
-                    Text("Recents", color = ui.muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    recents.forEach { PlaceRow(it, "", ui) { onPlace(it) } }
-                }
-                Text("Recommendations", color = ui.muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    RECS.forEach { c ->
-                        Box(
-                            Modifier.weight(1f).height(104.dp).clip(RoundedCornerShape(18.dp))
-                                .background(Brush.linearGradient(listOf(ui.accent.copy(alpha = 0.55f), ui.tile)))
-                                .clickable { onCategory(c.label, c.apiCats) }.padding(10.dp),
+                if (recents.isNotEmpty()) {
+                    Text(
+                        "Recent ›", color = ui.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onExpand).padding(vertical = 2.dp),
+                    )
+                    (if (full) recents else recents.take(1)).forEach { r ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                .border(1.5.dp, ui.muted.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                                .clickable { onPlace(r) }.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
-                            Text(c.glyph, fontSize = 28.sp, modifier = Modifier.align(Alignment.TopStart))
+                            Box(Modifier.size(42.dp).clip(CircleShape).background(ui.tile), contentAlignment = Alignment.Center) {
+                                Text("🕘", fontSize = 18.sp)
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(r.name, color = ui.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                if (r.sub.isNotEmpty()) Text(r.sub, color = ui.muted, fontSize = 13.sp, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+                Text("Recommendations", color = ui.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RECS.take(2).forEach { c ->
+                        Box(
+                            Modifier.weight(1f).height(150.dp).clip(RoundedCornerShape(20.dp))
+                                .background(Brush.linearGradient(listOf(ui.accent.copy(alpha = 0.55f), ui.tile)))
+                                .clickable { onCategory(c.label, c.apiCats) }.padding(14.dp),
+                        ) {
+                            Text(c.glyph, fontSize = 38.sp, modifier = Modifier.align(Alignment.TopStart))
                             Text(
-                                c.label, color = ui.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                c.label, color = ui.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.align(Alignment.BottomStart),
                             )
                         }
                     }
                 }
-                if (full) {
-                    Text("Popular Locations", color = ui.muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    POPULAR.chunked(3).forEach { row ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            row.forEach { c ->
-                                Column(
-                                    Modifier.weight(1f).aspectRatio(1.1f).clip(RoundedCornerShape(18.dp))
-                                        .background(ui.tile).clickable { onCategory(c.label, c.apiCats) },
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center,
-                                ) {
-                                    Text(c.glyph, fontSize = 26.sp)
-                                    Spacer(Modifier.height(6.dp))
-                                    Text(c.label, color = ui.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
+                Text("Popular Locations", color = ui.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                POPULAR.chunked(3).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { c ->
+                            Column(
+                                Modifier.weight(1f).aspectRatio(1.1f).clip(RoundedCornerShape(18.dp))
+                                    .background(ui.tile).clickable { onCategory(c.label, c.apiCats) },
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Text(c.glyph, fontSize = 26.sp)
+                                Spacer(Modifier.height(6.dp))
+                                Text(c.label, color = ui.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
-                            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                         }
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
@@ -286,6 +320,8 @@ fun PlaceCard(
     dist: String,
     onClose: () -> Unit,
     onDirections: () -> Unit,
+    isSaved: Boolean,
+    onToggleSave: () -> Unit,
     onSetHome: () -> Unit,
     onSetWork: () -> Unit,
 ) {
@@ -308,6 +344,7 @@ fun PlaceCard(
         }
         PrimaryBtn("Directions", ui, Modifier.fillMaxWidth(), onClick = onDirections)
         Row {
+            TextBtn(if (isSaved) "★ Saved" else "☆ Save", ui.muted, onToggleSave)
             TextBtn("Set as Home", ui.muted, onSetHome)
             TextBtn("Set as Work", ui.muted, onSetWork)
         }
@@ -435,5 +472,59 @@ fun AvoidSheet(
                 Switch(checked = on, onCheckedChange = set)
             }
         }
+    }
+}
+
+@Composable
+fun DetailsSheet(
+    ui: Ui,
+    buildings: Boolean,
+    labels: Boolean,
+    onBuildings: (Boolean) -> Unit,
+    onLabels: (Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
+    SheetShell(ui) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Map details", color = ui.ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            CloseBtn(ui, onClose)
+        }
+        listOf(
+            Triple("3D buildings", buildings, onBuildings),
+            Triple("Place and road names", labels, onLabels),
+        ).forEach { (label, on, set) ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(ui.tile).padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(label, color = ui.ink, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                Switch(checked = on, onCheckedChange = set)
+            }
+        }
+    }
+}
+
+@Composable
+fun ProfileSheet(
+    ui: Ui,
+    worldName: String,
+    savedCount: Int,
+    onChangeWorld: () -> Unit,
+    onClose: () -> Unit,
+) {
+    SheetShell(ui) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Profile", color = ui.ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            CloseBtn(ui, onClose)
+        }
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(ui.tile).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Your world: $worldName", color = ui.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text("Saved places: $savedCount", color = ui.muted, fontSize = 14.sp)
+        }
+        PrimaryBtn("Change world", ui, Modifier.fillMaxWidth(), onClick = onChangeWorld)
+        Text("Accounts and sync are coming later.", color = ui.muted, fontSize = 12.sp)
     }
 }

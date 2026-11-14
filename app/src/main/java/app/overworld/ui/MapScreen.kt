@@ -2,12 +2,15 @@ package app.overworld.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,6 +74,8 @@ import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 
 private const val EMPTY_FC = """{"type":"FeatureCollection","features":[]}"""
@@ -139,6 +144,12 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
     var sheetFull by remember { mutableStateOf(false) }
     var showWorlds by remember { mutableStateOf(false) }
     var showAvoid by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
+    var showProfile by remember { mutableStateOf(false) }
+    var showBuildings by remember { mutableStateOf(true) }
+    var showLabels by remember { mutableStateOf(true) }
+    var is3d by remember { mutableStateOf(true) }
+    var saved by remember { mutableStateOf(Prefs.saved(ctx)) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Place>>(emptyList()) }
     var listTitle by remember { mutableStateOf<String?>(null) }
@@ -189,6 +200,26 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
         if (!hasPerm) message = "No problem - you can still search and preview routes."
     }
 
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == Activity.RESULT_OK) {
+            r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let {
+                sheetFull = true
+                query = it
+            }
+        }
+    }
+    fun startMic() {
+        try {
+            micLauncher.launch(
+                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(
+                    RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                )
+            )
+        } catch (_: Exception) {
+            message = "Voice search isn't available on this device."
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun startUpdates() {
         try {
@@ -224,6 +255,18 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
                 CameraPosition.Builder().target(LatLng(p[1], p[0])).zoom(15.5).tilt(45.0).bearing(0.0).build()
             ),
             800,
+        )
+    }
+
+    fun toggle3d() {
+        val m = map ?: return
+        is3d = !is3d
+        val cp = m.cameraPosition
+        m.animateCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder().target(cp.target).zoom(cp.zoom).bearing(0.0).tilt(if (is3d) 50.0 else 0.0).build()
+            ),
+            600,
         )
     }
 
@@ -318,6 +361,13 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
         }
     }
 
+    fun openSavedList() {
+        sheetFull = true
+        listTitle = "Saved"
+        loadingList = false
+        listItems = listOfNotNull(home, work) + saved.filter { s -> s.name != home?.name && s.name != work?.name }
+    }
+
     fun clearTrip() {
         mode = "home"
         route = null
@@ -333,9 +383,11 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
         if (me != null) recenter()
     }
 
-    BackHandler(enabled = showWorlds || showAvoid || mode != "home" || sheetFull) {
+    BackHandler(enabled = showWorlds || showAvoid || showDetails || showProfile || mode != "home" || sheetFull) {
         when {
             showWorlds -> showWorlds = false
+            showDetails -> showDetails = false
+            showProfile -> showProfile = false
             showAvoid -> showAvoid = false
             mode == "plan" -> {
                 mode = "place"
@@ -409,6 +461,15 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
         }
     }
 
+    // ---- map detail toggles ----
+    LaunchedEffect(style, showBuildings, showLabels) {
+        val st = style ?: return@LaunchedEffect
+        fun vis(on: Boolean) = PropertyFactory.visibility(if (on) Property.VISIBLE else Property.NONE)
+        st.getLayer("buildings")?.setProperties(vis(showBuildings))
+        st.getLayer("place")?.setProperties(vis(showLabels))
+        st.getLayer("road-name")?.setProperties(vis(showLabels))
+    }
+
     // ---- demo drive (test without driving) ----
     LaunchedEffect(mode, demo) {
         val r = route
@@ -458,19 +519,6 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
-        // Brand chip (home)
-        if (mode == "home" && !sheetFull) {
-            Row(
-                Modifier.systemBarsPadding().padding(12.dp).shadow(6.dp, RoundedCornerShape(20.dp))
-                    .clip(RoundedCornerShape(20.dp)).background(ui.card).padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("◭", color = ui.accent, fontSize = 16.sp)
-                Text("Overworld", color = ui.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-
         // Next instruction (drive)
         if (mode == "drive") {
             Column(
@@ -485,14 +533,27 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
             }
         }
 
-        // Round buttons
+        // Map controls (just above the bottom sheet)
         if ((mode == "home" || mode == "place" || mode == "plan") && !sheetFull) {
             Column(
-                Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = screenH * 0.5f + 12.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                RoundButton("◐", ui) { showWorlds = true }
-                RoundButton("◎", ui) { recenter() }
+                Column(
+                    Modifier.shadow(6.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)).background(ui.card),
+                ) {
+                    Text(
+                        "select map", color = ui.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable { showWorlds = true }.padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                    Text(
+                        "map details", color = ui.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable { showDetails = true }.padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                }
+                RoundButton(if (is3d) "3D" else "2D", ui) { toggle3d() }
+                RoundButton("➤", ui) { recenter() }
             }
         }
 
@@ -526,7 +587,7 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
                 mode == "home" -> HomeSheet(
                     ui = ui,
                     full = sheetFull,
-                    maxHeight = if (sheetFull) screenH * 0.9f else screenH * 0.4f,
+                    maxHeight = if (sheetFull) screenH * 0.9f else screenH * 0.5f,
                     hint = if (savingFor != null) "Search a place to save as ${if (savingFor == "home") "Home" else "Work"}" else "Search",
                     query = query,
                     onQuery = { query = it },
@@ -537,6 +598,9 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
                         listTitle = null
                         savingFor = null
                     },
+                    onMic = { startMic() },
+                    onProfile = { showProfile = true },
+                    onSaved = { openSavedList() },
                     home = home,
                     work = work,
                     onHome = {
@@ -575,6 +639,12 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
                             onDirections = {
                                 mode = "plan"
                                 fetchRoutes()
+                            },
+                            isSaved = saved.any { it.name == d.name && it.lat == d.lat && it.lon == d.lon },
+                            onToggleSave = {
+                                val on = Prefs.toggleSaved(ctx, d)
+                                saved = Prefs.saved(ctx)
+                                message = if (on) "Saved" else "Removed from Saved"
                             },
                             onSetHome = {
                                 Prefs.savePlace(ctx, "home", d)
@@ -642,6 +712,26 @@ fun MapScreen(skinId: String, onSkin: (String) -> Unit) {
                     Text(dest?.name ?: "", color = ui.muted, fontSize = 15.sp, maxLines = 1)
                     PrimaryBtn("Done", ui, Modifier.fillMaxWidth()) { clearTrip() }
                 }
+            }
+        }
+
+        if (showDetails) {
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                DetailsSheet(ui, showBuildings, showLabels, { showBuildings = it }, { showLabels = it }, { showDetails = false })
+            }
+        }
+        if (showProfile) {
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                ProfileSheet(
+                    ui = ui,
+                    worldName = skin.name,
+                    savedCount = saved.size + listOfNotNull(home, work).size,
+                    onChangeWorld = {
+                        showProfile = false
+                        showWorlds = true
+                    },
+                    onClose = { showProfile = false },
+                )
             }
         }
 

@@ -47,4 +47,16 @@ object Prefs {
         val list = (listOf(p) + recents(c).filter { it.name != p.name }).take(5)
         sp(c).edit().putString("recents", list.joinToString(R) { enc(it) }).apply()
     }
+
+    fun saved(c: Context): List<Place> =
+        (sp(c).getString("saved", "") ?: "").split(R).filter { it.isNotEmpty() }.mapNotNull { dec(it) }
+
+    /** Adds the place if missing, removes it if present. Returns true if it is saved afterwards. */
+    fun toggleSaved(c: Context, p: Place): Boolean {
+        val cur = saved(c)
+        val has = cur.any { it.name == p.name && it.lat == p.lat && it.lon == p.lon }
+        val next = if (has) cur.filterNot { it.name == p.name && it.lat == p.lat && it.lon == p.lon } else listOf(p) + cur
+        sp(c).edit().putString("saved", next.joinToString(R) { enc(it) }).apply()
+        return !has
+    }
 }
