@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
@@ -275,34 +276,45 @@ fun HomeSheet(
                     }
                 }
                 Text("Recommendations", color = ui.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    RECS.take(2).forEach { c ->
-                        Box(
-                            Modifier.weight(1f).height(150.dp).clip(RoundedCornerShape(20.dp))
-                                .background(Brush.linearGradient(listOf(ui.accent.copy(alpha = 0.55f), ui.tile)))
-                                .clickable { onCategory(c.label, c.apiCats) }.padding(14.dp),
-                        ) {
-                            Text(c.glyph, fontSize = 38.sp, modifier = Modifier.align(Alignment.TopStart))
-                            Text(
-                                c.label, color = ui.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                                modifier = Modifier.align(Alignment.BottomStart),
-                            )
-                        }
+                @Composable
+                fun RecCard(c: Cat, mod: Modifier) {
+                    Box(
+                        mod.clip(RoundedCornerShape(24.dp))
+                            .background(Brush.linearGradient(listOf(ui.accent.copy(alpha = 0.6f), ui.tile)))
+                            .clickable { onCategory(c.label, c.apiCats) }.padding(16.dp),
+                    ) {
+                        Text(c.glyph, fontSize = 30.sp, modifier = Modifier.align(Alignment.TopStart))
+                        Text(
+                            c.label, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.align(Alignment.BottomStart),
+                        )
                     }
                 }
-                Text("Popular Locations", color = ui.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().height(400.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RecCard(RECS[0], Modifier.weight(1f).fillMaxHeight())
+                    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        RecCard(RECS[1], Modifier.fillMaxWidth().weight(1f))
+                        RecCard(RECS[2], Modifier.fillMaxWidth().weight(1f))
+                    }
+                }
+                Text("Popular Locations", color = ui.muted, fontSize = 17.sp)
                 POPULAR.chunked(3).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         row.forEach { c ->
                             Column(
-                                Modifier.weight(1f).aspectRatio(1.1f).clip(RoundedCornerShape(18.dp))
-                                    .background(ui.tile).clickable { onCategory(c.label, c.apiCats) },
+                                Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).clickable { onCategory(c.label, c.apiCats) },
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
                             ) {
-                                Text(c.glyph, fontSize = 26.sp)
-                                Spacer(Modifier.height(6.dp))
-                                Text(c.label, color = ui.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Box(
+                                    Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(24.dp)).background(ui.tile),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Box(Modifier.size(64.dp).clip(CircleShape).background(ui.card), contentAlignment = Alignment.Center) {
+                                        Text(c.glyph, fontSize = 28.sp)
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Text(c.label, color = ui.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                         repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
